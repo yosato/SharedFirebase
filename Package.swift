@@ -1,21 +1,27 @@
-// swift-tools-version: 6.0
-// The swift-tools-version declares the minimum version of Swift required to build this package.
-
+// swift-tools-version:5.9
 import PackageDescription
 
 let package = Package(
-    name: "sharedFirebase",
+    name: "SharedFirebase",
+    platforms: [
+        .iOS(.v14) // Safe default, adjust to your project's deployment target
+    ],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
-            name: "sharedFirebase",
-            targets: ["sharedFirebase"]),
+            name: "SharedFirebase",
+            targets: ["SharedFirebase"]
+        )
+    ],
+    dependencies: [
+        .package(url: "https://github.com/firebase/firebase-ios-sdk.git", from: "11.15.0")
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "sharedFirebase"),
-
+            name: "SharedFirebase",
+            dependencies: [
+                .product(name: "FirebaseAuth", package: "firebase-ios-sdk"),
+                .product(name: "FirebaseFirestore", package: "firebase-ios-sdk")
+            ]
+        )
     ]
 )
