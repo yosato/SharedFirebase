@@ -46,14 +46,14 @@ enum AuthError: Error {
 }
 
 
-public protocol AuthLogic: Actor {
-    var currentUser: User? { get }
-    var signedIn: Bool { get }
-    func signIn_withApple() async throws -> User
-    func create_firestore_user(user: User, gender: String?, extraFields: [String:Any]) async throws
-}
+//public protocol AuthLogic: Actor {
+//    var currentUser: User? { get }
+//    var signedIn: Bool { get }
+//    func signIn_withApple() async throws -> User
+//    func create_firestore_user(user: User, gender: String?, extraFields: [String:Any]) async throws
+//}
 
-public actor SharedAuthService:AuthLogic {
+public actor SharedAuthService {
     public static let shared = SharedAuthService()
 
     private let db = Firestore.firestore()
@@ -97,8 +97,10 @@ public actor SharedAuthService:AuthLogic {
     }
 
 
-    public func signIn_withApple() async throws -> User {
-        let credential = try await get_apple_id_credential()
+    public func signIn_withApple(appleAuth: ASAuthorization, nonce: String) async throws -> User {
+        guard let credential = appleAuth.credential as? ASAuthorizationAppleIDCredential else {
+            throw AuthError.invalidCredential
+        }
 
         guard let id_token_data = credential.identityToken,
               let id_token_string = String(data: id_token_data, encoding: .utf8) else {
@@ -108,7 +110,7 @@ public actor SharedAuthService:AuthLogic {
         let firebaseCredential = OAuthProvider.credential(
             withProviderID: "apple.com",
             idToken: id_token_string,
-            rawNonce: generate_nonce() // add real nonce if needed
+            rawNonce: nonce
         )
 
         let authResult = try await Auth.auth().signIn(with: firebaseCredential)
@@ -185,4 +187,10 @@ final class AppleSignInDelegate: NSObject, ASAuthorizationControllerDelegate, AS
     ) {
         continuation.resume(throwing: error)
     }
+}
+
+public func sha256(_ input: String) -> String {
+    let inputData = Data(input.utf8)
+    let hashed = SHA256.hash(data: inputData)
+    return hashed.compactMap { String(format: "%02x", $0) }.joined()
 }
