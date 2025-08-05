@@ -70,14 +70,19 @@ public actor SharedAuthService {
 
         let doc_ref = Firestore.firestore().collection("registeredMembers").document(user.uid)
         let snapshot = try await doc_ref.getDocument()
+        
+        print("user.uid:", user.uid)
+        print("checking path:", doc_ref.path)
+        print("exists:", snapshot.exists)
+
 
         if !snapshot.exists {
-            try await create_firestore_user(
+            do{try await create_firestore_user(
                 user: user,
-//                display_name: display_name,
+                //                display_name: display_name,
                 gender: gender,
                 extraFields: extraFields
-            )
+            )}catch{print("❌ Failed to create Firestore user: \(error.localizedDescription)");throw error}
         }
 
         return user
@@ -135,9 +140,7 @@ public actor SharedAuthService {
 
         if let name = user.displayName {
             data["displayName"] = name
-        } else {
-            throw AuthError.missingDisplayName  // optional: enforce this
-        }
+        } 
 
         if let g = gender {
             data["gender"] = g  // assuming Gender is RawRepresentable (e.g. String)
