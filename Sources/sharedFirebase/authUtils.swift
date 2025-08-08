@@ -132,9 +132,15 @@ public actor SharedAuthService {
         extraFields: [String: Any] = [:]
     ) async throws {
         let doc_ref = db.collection("registeredMembers").document(user.uid)
+        var finalEmail:String=""
+        if let emailUW=user.email{
+            if(!emailUW.contains("@privaterelay.appleid.com")){
+                finalEmail=emailUW
+            }
+        }
         var data: [String: Any] = [
             "uid": user.uid,
-            "email": user.email ?? "",
+            "email": finalEmail,
             "createdAt": user.metadata.creationDate ?? Date()
         ]
 

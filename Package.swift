@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "SharedFirebase",
     platforms: [
-        .iOS(.v14) // Safe default, adjust to your project's deployment target
+        .iOS(.v17) // Safe default, adjust to your project's deployment target
     ],
     products: [
         .library(
