@@ -40,22 +40,14 @@ public protocol PresenceManaging {
 }
 
 public protocol PresenceObserving {
-    func observe_member_presence(uid: String, handler: @escaping (PresenceSnapshot) -> Void) -> AnyObject
-    func stop_observing(_ token: AnyObject)
+    /// Live updates for one member until the consumer cancels.
+    func observe_member_presence(uid: String) -> AsyncStream<PresenceSnapshot>
+
+    /// Live “who’s online” for a group/room.
+    func observe_online_members(club_id: String) -> AsyncStream<[PresenceSnapshot]>
 }
 
 
-
-// 1) Storage/stream abstraction (Firestore/Supabase/etc.)
-public protocol PresenceRepository {
-    // Writes
-    func write_heartbeat(uid: String, device_id: String?, app_version: String?, at: Date) async throws
-    func set_explicit_state(uid: String, state: PresenceState, at: Date) async throws
-
-    // Reads/streams
-    func stream_member(uid: String, on_update: @escaping (PresenceSnapshot) -> Void) -> AnyObject
-    func stop_stream(_ token: AnyObject)
-}
 
 // 2) Policy for “who counts as online” (no hardcoded 45s in model)
 public struct PresencePolicy {
@@ -72,3 +64,17 @@ public struct PresencePolicy {
         return now.timeIntervalSince(t) <= (online_ttl_seconds + grace_seconds)
     }
 }
+
+public struct PresenceObserver: PresenceObserving {
+    private let repository: PresenceRepository
+    public init(repository: PresenceRepository) { self.repository = repository }
+
+    public func observe_member_presence(uid: String) -> AsyncStream<PresenceSnapshot> { fatalError() }
+    public func observe_online_members(club_id: String) -> AsyncStream<[PresenceSnapshot]> { fatalError() }
+}
+
+public protocol PresenceRepository {
+    func stream_member(uid: String) -> AsyncStream<PresenceSnapshot>
+    func stream_club(club_id: String) -> AsyncStream<[PresenceSnapshot]>
+}
+
