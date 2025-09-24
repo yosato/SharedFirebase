@@ -1,80 +1,226 @@
 //
-//  File.swift
+//  Presence.swift
 //  SharedFirebase
 //
 //  Created by Yo Sato on 2025/09/22.
 //
 
 import Foundation
+import FirebaseFirestore
+
+// MARK: - Models & Policy
 
 public protocol MemberRepresentable {
     var uid: String { get }
     var displayName: String { get }
 }
 
-// Presence values you can show in UI
-public enum PresenceState: Equatable {
+public enum PresenceState: String, Codable, Equatable {
     case online
     case background
     case offline
     case unknown
 }
 
-// What observers receive
 public struct PresenceSnapshot: Equatable {
     public let uid: String
     public let state: PresenceState
     public let lastSeen: Date?
-    public var isOnline: Bool {
-        guard let t = lastSeen else { return false }
-        return Date().timeIntervalSince(t) < 45 && state != .offline
+
+    public init(uid: String, state: PresenceState, lastSeen: Date?) {
+        self.uid = uid
+        self.state = state
+        self.lastSeen = lastSeen
+    }
+
+    public func is_online(_ policy: PresencePolicy = PresencePolicy()) -> Bool {
+        policy.is_online(lastSeen: lastSeen, state: state)
     }
 }
 
-// Manager writes *your* presence; Observer watches *others*
+public struct PresencePolicy {
+    public let onlineTtlSeconds: TimeInterval
+    public let graceSeconds: TimeInterval
+
+    public init(onlineTtlSeconds: TimeInterval = 45, graceSeconds: TimeInterval = 10) {
+        self.onlineTtlSeconds = onlineTtlSeconds
+        self.graceSeconds = graceSeconds
+    }
+
+    public func is_online(lastSeen: Date?, state: PresenceState, now: Date = Date()) -> Bool {
+        guard state != .offline, let t = lastSeen else { return false }
+        return now.timeIntervalSince(t) <= (onlineTtlSeconds + graceSeconds)
+    }
+}
+
+// MARK: - Protocols (one-shot only)
+
 public protocol PresenceManaging {
-    func start_tracking(uid: String, device_id: String?, app_version: String?)
-    func stop_tracking()
-    func mark_background()
-    func mark_foreground()
+    func start_tracking(uid: String, deviceID: String?, appVersion: String?) async
+    func stop_tracking(uid: String) async
+    func mark_background(uid: String) async
+    func mark_foreground(uid: String) async
 }
 
 public protocol PresenceObserving {
-    /// Live updates for one member until the consumer cancels.
-    func observe_member_presence(uid: String) -> AsyncStream<PresenceSnapshot>
-
-    /// Live “who’s online” for a group/room.
-    func observe_online_members(club_id: String) -> AsyncStream<[PresenceSnapshot]>
+    func get_member_presence(uid: String) async -> PresenceSnapshot?
+    func get_online_users(policy: PresencePolicy) async -> [PresenceSnapshot]
 }
 
+public protocol PresenceStore {
+    // reads
+    func fetch_member(uid: String) async -> PresenceSnapshot?
+    func fetch_online_users(policy: PresencePolicy) async -> [PresenceSnapshot]
 
+    // writes
+    func set_presence(uid: String,
+                      state: PresenceState,
+                      lastSeen: Date,
+                      deviceID: String?,
+                      appVersion: String?) async throws
 
-// 2) Policy for “who counts as online” (no hardcoded 45s in model)
-public struct PresencePolicy {
-    public let online_ttl_seconds: TimeInterval
-    public let grace_seconds: TimeInterval
-
-    public init(online_ttl_seconds: TimeInterval = 45, grace_seconds: TimeInterval = 10) {
-        self.online_ttl_seconds = online_ttl_seconds
-        self.grace_seconds = grace_seconds
-    }
-
-    public func is_online(last_seen: Date?, state: PresenceState, now: Date = Date()) -> Bool {
-        guard state != .offline, let t = last_seen else { return false }
-        return now.timeIntervalSince(t) <= (online_ttl_seconds + grace_seconds)
-    }
+    func clear_presence(uid: String) async throws
 }
+
+// MARK: - Observer (pass-through)
 
 public struct PresenceObserver: PresenceObserving {
-    private let repository: PresenceRepository
-    public init(repository: PresenceRepository) { self.repository = repository }
+    private let repository: PresenceStore
+    public init(repository: PresenceStore) { self.repository = repository }
 
-    public func observe_member_presence(uid: String) -> AsyncStream<PresenceSnapshot> { fatalError() }
-    public func observe_online_members(club_id: String) -> AsyncStream<[PresenceSnapshot]> { fatalError() }
+    public func get_member_presence(uid: String) async -> PresenceSnapshot? {
+        await repository.fetch_member(uid: uid)
+    }
+
+    public func get_online_users(policy: PresencePolicy) async -> [PresenceSnapshot] {
+        await repository.fetch_online_users(policy: policy)
+    }
 }
 
-public protocol PresenceRepository {
-    func stream_member(uid: String) -> AsyncStream<PresenceSnapshot>
-    func stream_club(club_id: String) -> AsyncStream<[PresenceSnapshot]>
+// MARK: - Firestore Store
+
+public final class FirestorePresenceStore: PresenceStore {
+    private let db: Firestore
+    private let presenceCol: CollectionReference
+
+    public init(db: Firestore = Firestore.firestore(), collectionPath: String = "onlineUsers") {
+        self.db = db
+        self.presenceCol = db.collection(collectionPath)
+    }
+
+    private func doc_ref(uid: String) -> DocumentReference {
+        presenceCol.document(uid)
+    }
+
+    // MARK: Reads
+
+    public func fetch_member(uid: String) async -> PresenceSnapshot? {
+        do {
+            let snap = try await doc_ref(uid: uid).getDocument()
+            guard snap.exists, let data = snap.data() else { return nil }
+            return decode_snapshot(uid: uid, data: data)
+        } catch {
+            return nil
+        }
+    }
+
+    public func fetch_online_users(policy: PresencePolicy) async -> [PresenceSnapshot] {
+        let cutoff = Date(timeIntervalSinceNow: -(policy.onlineTtlSeconds + policy.graceSeconds))
+        let cutoffTS = Timestamp(date: cutoff)
+        do {
+            let q = presenceCol
+                .whereField("state", in: ["online", "background"])
+                .whereField("lastSeen", isGreaterThanOrEqualTo: cutoffTS)
+            let snap = try await q.getDocuments()
+            return snap.documents.compactMap { doc in
+                decode_snapshot(uid: doc.documentID, data: doc.data())
+            }.filter { $0.is_online(policy) }
+        } catch {
+            return []
+        }
+    }
+
+    // MARK: Writes
+
+    public func set_presence(uid: String,
+                             state: PresenceState,
+                             lastSeen: Date,
+                             deviceID: String?,
+                             appVersion: String?) async throws {
+        var payload: [String: Any] = [
+            "uid": uid,
+            "state": state.rawValue,
+            "lastSeen": Timestamp(date: lastSeen),
+        ]
+        if let deviceID { payload["deviceID"] = deviceID }
+        if let appVersion { payload["appVersion"] = appVersion }
+
+        try await doc_ref(uid: uid).setData(payload, merge: true)
+    }
+
+    public func clear_presence(uid: String) async throws {
+        try await doc_ref(uid: uid).setData([
+            "uid": uid,
+            "state": PresenceState.offline.rawValue,
+            "lastSeen": Timestamp(date: Date())
+        ], merge: true)
+    }
+
+    // MARK: Helpers
+
+    private func decode_snapshot(uid: String, data: [String: Any]) -> PresenceSnapshot {
+        let stateRaw = data["state"] as? String ?? PresenceState.unknown.rawValue
+        let state = PresenceState(rawValue: stateRaw) ?? .unknown
+        let ts = data["lastSeen"] as? Timestamp
+        return PresenceSnapshot(uid: uid, state: state, lastSeen: ts?.dateValue())
+    }
+}
+
+// MARK: - Manager
+
+public final class FirestorePresenceManager: PresenceManaging {
+    private let store: PresenceStore
+    private let clock: () -> Date
+
+    public init(store: PresenceStore, clock: @escaping () -> Date = { Date() }) {
+        self.store = store
+        self.clock = clock
+    }
+
+    public func start_tracking(uid: String, deviceID: String?, appVersion: String?) async {
+        do {
+            try await store.set_presence(uid: uid,
+                                         state: .online,
+                                         lastSeen: clock(),
+                                         deviceID: deviceID,
+                                         appVersion: appVersion)
+        } catch {}
+    }
+
+    public func stop_tracking(uid: String) async {
+        do {
+            try await store.clear_presence(uid: uid)
+        } catch {}
+    }
+
+    public func mark_background(uid: String) async {
+        do {
+            try await store.set_presence(uid: uid,
+                                         state: .background,
+                                         lastSeen: clock(),
+                                         deviceID: nil,
+                                         appVersion: nil)
+        } catch {}
+    }
+
+    public func mark_foreground(uid: String) async {
+        do {
+            try await store.set_presence(uid: uid,
+                                         state: .online,
+                                         lastSeen: clock(),
+                                         deviceID: nil,
+                                         appVersion: nil)
+        } catch {}
+    }
 }
 
