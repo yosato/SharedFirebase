@@ -125,19 +125,23 @@ public final class FirestorePresenceStore: PresenceStore {
     }
 
     public func fetch_online_users(policy: PresencePolicy) async -> [PresenceSnapshot] {
-        let cutoff = Date(timeIntervalSinceNow: -(policy.onlineTtlSeconds + policy.graceSeconds))
-        let cutoffTS = Timestamp(date: cutoff)
+//        let cutoff = Date(timeIntervalSinceNow: -(policy.onlineTtlSeconds + policy.graceSeconds))
+//        let cutoffTS = Timestamp(date: cutoff)
         do {
-            let q = presenceCol
-                .whereField("state", in: ["online", "background"])
-                .whereField("lastSeen", isGreaterThanOrEqualTo: cutoffTS)
-            let snap = try await q.getDocuments()
-            return snap.documents.compactMap { doc in
+//            let q = presenceCol
+//                .whereField("state", in: ["online", "background"])
+//                .whereField("lastSeen", isGreaterThanOrEqualTo: cutoffTS)
+            let snap = try await presenceCol.getDocuments(source:.server)
+            let rows = snap.documents.count
+            let online = snap.documents.compactMap { doc in
                 decode_snapshot(uid: doc.documentID, data: doc.data())
             }.filter { $0.is_online(policy) }
+            print("presence[store] raw=\(rows) filtered=\(online.count)")
+
+            return online
         } catch {
-            return []
-        }
+            print("presence[store] read FAILED:", error)
+            return []        }
     }
 
     // MARK: Writes
