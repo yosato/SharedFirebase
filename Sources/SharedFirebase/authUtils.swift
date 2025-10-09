@@ -60,6 +60,18 @@ public actor SharedAuthService {
     public var currentUser: User? = nil
     public var signedIn: Bool = false
 
+    public func register_with_email_password(displayName: String, email: String, password: String) async throws -> User {
+        let user = try await signIn_and_create_firestore_user_if_necessary(using: {
+            let result = try await Auth.auth().createUser(withEmail: email, password: password)
+            return result.user
+        })
+        try await db.collection("registeredMembers")
+            .document(user.uid)
+            .setData(["displayName": displayName], merge: true)
+        return user
+    }
+
+    
     public func signIn_and_create_firestore_user_if_necessary(
         using sign_in_func: @escaping () async throws -> User,
         gender: String = "",
@@ -68,7 +80,7 @@ public actor SharedAuthService {
     ) async throws -> User {
         let user = try await sign_in_func()
 
-        let doc_ref = Firestore.firestore().collection("registeredMembers").document(user.uid)
+        let doc_ref = db.collection("registeredMembers").document(user.uid)
         let snapshot = try await doc_ref.getDocument()
         
         print("user.uid:", user.uid)
@@ -84,7 +96,8 @@ public actor SharedAuthService {
                 extraFields: extraFields
             )}catch{print("❌ Failed to create Firestore user: \(error.localizedDescription)");throw error}
         }
-
+        self.currentUser=user
+        self.signedIn=true
         return user
     }
     
