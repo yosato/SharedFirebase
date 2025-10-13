@@ -33,8 +33,8 @@ public struct PresenceSnapshot: Equatable {
         self.lastSeen = lastSeen
     }
 
-    public func is_online(_ policy: PresencePolicy = PresencePolicy()) -> Bool {
-        policy.is_online(lastSeen: lastSeen, state: state)
+    public func is_online(_ policy: PresencePolicy = PresencePolicy(), now:Date) -> Bool {
+        policy.is_online(lastSeen: lastSeen, state: state, now:now)
     }
 }
 
@@ -47,9 +47,10 @@ public struct PresencePolicy {
         self.graceSeconds = graceSeconds
     }
 
-    public func is_online(lastSeen: Date?, state: PresenceState, now: Date = Date()) -> Bool {
+    public func is_online(lastSeen: Date?, state: PresenceState, now: Date) -> Bool {
         guard state != .offline, let t = lastSeen else { return false }
-        return now.timeIntervalSince(t) <= (onlineTtlSeconds + graceSeconds)
+        let cutoff = now.addingTimeInterval(-(onlineTtlSeconds + graceSeconds))
+        return t >= cutoff
     }
 }
 
@@ -125,17 +126,13 @@ public final class FirestorePresenceStore: PresenceStore {
     }
 
     public func fetch_online_users(policy: PresencePolicy) async -> [PresenceSnapshot] {
-//        let cutoff = Date(timeIntervalSinceNow: -(policy.onlineTtlSeconds + policy.graceSeconds))
-//        let cutoffTS = Timestamp(date: cutoff)
         do {
-//            let q = presenceCol
-//                .whereField("state", in: ["online", "background"])
-//                .whereField("lastSeen", isGreaterThanOrEqualTo: cutoffTS)
             let snap = try await presenceCol.getDocuments(source:.server)
             let rows = snap.documents.count
+            let now=Date()
             let online = snap.documents.compactMap { doc in
                 decode_snapshot(uid: doc.documentID, data: doc.data())
-            }.filter { $0.is_online(policy) }
+            }.filter { $0.is_online(policy,now:now) }
             print("presence[store] raw=\(rows) filtered=\(online.count)")
 
             return online
