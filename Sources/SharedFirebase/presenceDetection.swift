@@ -151,7 +151,7 @@ public final class FirestorePresenceStore: PresenceStore {
         var payload: [String: Any] = [
             "uid": uid,
             "state": state.rawValue,
-            "lastSeen": Timestamp(date: lastSeen),
+            "lastSeen": FieldValue.serverTimestamp()
         ]
         if let deviceID { payload["deviceID"] = deviceID }
         if let appVersion { payload["appVersion"] = appVersion }
@@ -163,7 +163,7 @@ public final class FirestorePresenceStore: PresenceStore {
         try await doc_ref(uid: uid).setData([
             "uid": uid,
             "state": PresenceState.offline.rawValue,
-            "lastSeen": Timestamp(date: Date())
+            "lastSeen": FieldValue.serverTimestamp()
         ], merge: true)
     }
 
