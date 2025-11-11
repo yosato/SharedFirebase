@@ -39,19 +39,19 @@ public func generate_nonce(length: Int = 32) -> String {
     return result
 }
 
-enum AuthError: Error {
+public enum AuthError: Error {
     case invalidCredential
     case firestoreWriteFailed
     case missingDisplayName
+    case verificationTimeout
+    case noAuthenticatedUser
 }
 
+public enum FSError:Error{
+    case dataNotFoundError
+    case dataNotSetError
+}
 
-//public protocol AuthLogic: Actor {
-//    var currentUser: User? { get }
-//    var signedIn: Bool { get }
-//    func signIn_withApple() async throws -> User
-//    func create_firestore_user(user: User, gender: String?, extraFields: [String:Any]) async throws
-//}
 
 public actor SharedAuthService {
     public static let shared = SharedAuthService()
@@ -59,6 +59,37 @@ public actor SharedAuthService {
     private let db = Firestore.firestore()
     public var currentUser: User? = nil
     public var signedIn: Bool = false
+    
+    public func create_auth_account_withVerification(displayName:String, email: String, password: String, gender:String="", initLevel:String="", confirmEmail:Bool=true) async throws-> User {
+        do{let authResult=try await Auth.auth().createUser(withEmail: email, password: password)
+            let user=authResult.user
+            if(confirmEmail){
+                
+                try await user.sendEmailVerification()
+                          let tries = 150 // ~5 min @ 2s
+                          for _ in 0..<tries {
+                              try await Task.sleep(nanoseconds: 2_000_000_000)
+                              try await user.reload()
+                              try Task.checkCancellation()
+                              if user.isEmailVerified { break }
+                          }
+                          guard user.isEmailVerified else { throw AuthError.verificationTimeout }
+            }
+            self.currentUser=authResult.user
+            self.currentUser!.displayName=displayName
+            
+            print("email verified")
+            self.signedIn=true
+            return user
+        }catch{
+                print("account creation failed")
+                print(error.localizedDescription)
+                
+            throw AuthError.noAuthenticatedUser
+            }
+        
+    }
+   
 
     public func register_with_email_password(displayName: String, email: String, password: String) async throws -> User {
         let user = try await signIn_and_create_firestore_user_if_necessary(using: {
@@ -169,10 +200,12 @@ public actor SharedAuthService {
                data[k] = v
            }
         
-        try await Firestore.firestore()
-            .collection("registeredMembers")
-            .document(user.uid)
-            .setData(data, merge: false)
+        do{try await Firestore.firestore()
+                .collection("registeredMembers")
+                .document(user.uid)
+            .setData(data, merge: false)}catch{
+                throw FSError.dataNotSetError
+            }
     }
     
 }
