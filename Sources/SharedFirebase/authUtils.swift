@@ -45,11 +45,13 @@ public enum AuthError: Error {
     case missingDisplayName
     case verificationTimeout
     case noAuthenticatedUser
+    case deletionFailedError
 }
 
 public enum FSError:Error{
     case dataNotFoundError
     case dataNotSetError
+    case deletionFailedError
 }
 
 
@@ -59,6 +61,36 @@ public actor SharedAuthService {
     private let db = Firestore.firestore()
     public var currentUser: User? = nil
     public var signedIn: Bool = false
+   
+        public func delete_firestore_auth_accounts(credential: AuthCredential?) async throws {
+              guard let user = Auth.auth().currentUser else {
+                  throw NSError(domain: "auth", code: 0, userInfo: [NSLocalizedDescriptionKey: "No signed-in user"])
+              }
+
+              // Reauthenticate if a credential is provided
+              if let cred = credential {
+                  do{
+                      _ = try await user.reauthenticate(with: cred)}catch{
+                          throw AuthError.invalidCredential
+                      }
+              }
+
+              // 1) Delete Firestore doc
+            do{try await Firestore.firestore()
+                    .collection("registeredUsers")
+                    .document(user.uid)
+                    .delete()
+            }catch{
+                throw FSError.deletionFailedError
+            }
+
+              // 2) Delete Auth account
+            do{
+                try await user.delete()}catch{
+                    throw AuthError.deletionFailedError
+                }
+          }
+    
     
     public func create_auth_account_withVerification(displayName:String, email: String, password: String, gender:String="", initLevel:String="", confirmEmail:Bool=true) async throws-> User {
         do{let authResult=try await Auth.auth().createUser(withEmail: email, password: password)
@@ -90,7 +122,7 @@ public actor SharedAuthService {
         
     }
    
-
+    
     public func register_with_email_password(displayName: String, email: String, password: String) async throws -> User {
         let user = try await signIn_and_create_firestore_user_if_necessary(using: {
             let result = try await Auth.auth().createUser(withEmail: email, password: password)
