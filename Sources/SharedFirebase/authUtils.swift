@@ -178,6 +178,37 @@ public actor SharedAuthService {
     }
 
 
+    // 1) New “real” implementation with the extra info
+    public func signIn_withApple_and_isNew(
+        appleAuth: ASAuthorization,
+        nonce: String
+    ) async throws -> (user: User, isNew: Bool) {
+        guard let credential = appleAuth.credential as? ASAuthorizationAppleIDCredential else {
+            throw AuthError.invalidCredential
+        }
+
+        guard let id_token_data = credential.identityToken,
+              let id_token_string = String(data: id_token_data, encoding: .utf8) else {
+            throw AuthError.invalidCredential
+        }
+
+        let firebaseCredential = OAuthProvider.credential(
+            withProviderID: "apple.com",
+            idToken: id_token_string,
+            rawNonce: nonce
+        )
+
+        let authResult = try await Auth.auth().signIn(with: firebaseCredential)
+        let user = authResult.user
+        let isNew = authResult.additionalUserInfo?.isNewUser ?? false
+
+        self.currentUser = user
+        self.signedIn = true
+
+        return (user, isNew)
+    }
+
+    
     public func signIn_withApple(appleAuth: ASAuthorization, nonce: String) async throws -> User {
         guard let credential = appleAuth.credential as? ASAuthorizationAppleIDCredential else {
             throw AuthError.invalidCredential
@@ -236,7 +267,8 @@ public actor SharedAuthService {
                 .collection("registeredMembers")
                 .document(user.uid)
             .setData(data, merge: false)}catch{
-                throw FSError.dataNotSetError
+                print(error)
+                throw error
             }
     }
     
