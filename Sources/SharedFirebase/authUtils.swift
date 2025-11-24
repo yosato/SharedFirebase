@@ -152,8 +152,8 @@ public actor SharedAuthService {
 
 
         if !snapshot.exists {
-            do{try await create_firestore_user(
-                user: user,
+            do{try await create_firestore_member_fromAuthUser(
+                authUser: user,
                 //                display_name: display_name,
                 gender: gender,
                 extraFields: extraFields
@@ -233,25 +233,25 @@ public actor SharedAuthService {
         return user
     }
 
-    public func create_firestore_user(
-        user: User,
+    public func create_firestore_member_fromAuthUser(
+        authUser: User,
         gender: String? = nil,
         extraFields: [String: Any] = [:]
     ) async throws {
-        let doc_ref = db.collection("registeredMembers").document(user.uid)
+        let doc_ref = db.collection("registeredMembers").document(authUser.uid)
         var finalEmail:String=""
-        if let emailUW=user.email{
+        if let emailUW=authUser.email{
             if(!emailUW.contains("@privaterelay.appleid.com")){
                 finalEmail=emailUW
             }
         }
         var data: [String: Any] = [
-            "uid": user.uid,
+            "uid": authUser.uid,
             "email": finalEmail,
-            "createdAt": user.metadata.creationDate ?? Date()
+            "createdAt": authUser.metadata.creationDate ?? Date()
         ]
 
-        if let name = user.displayName {
+        if let name = authUser.displayName {
             data["displayName"] = name
         } 
 
@@ -265,7 +265,7 @@ public actor SharedAuthService {
         
         do{try await Firestore.firestore()
                 .collection("registeredMembers")
-                .document(user.uid)
+                .document(authUser.uid)
             .setData(data, merge: false)}catch{
                 print(error)
                 throw error
