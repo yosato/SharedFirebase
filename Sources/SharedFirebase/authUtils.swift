@@ -46,6 +46,10 @@ public enum AuthError: Error {
     case verificationTimeout
     case noAuthenticatedUser
     case deletionFailedError
+    case wrongPassword
+     case userDisabled
+     case requiresRecentLogin
+     case otherError
 }
 
 public enum FSError:Error{
@@ -59,8 +63,72 @@ public actor SharedAuthService {
     public static let shared = SharedAuthService()
 
     private let db = Firestore.firestore()
+    private let auth=Auth.auth()
     public var currentUser: User? = nil
     public var signedIn: Bool = false
+    
+    
+    
+    public func reauthenticate_withPassword(_ password: String) async throws {
+        guard let user = auth.currentUser else {
+            throw AuthError.noAuthenticatedUser
+        }
+        guard let email = user.email, !password.isEmpty else {
+            throw AuthError.invalidCredential
+        }
+
+        let credential = EmailAuthProvider.credential(withEmail: email, password: password)
+
+        do {
+            try await user.reauthenticate(with: credential)
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == AuthErrorDomain,
+               let code = AuthErrorCode(rawValue: nsError.code) {
+                switch code {
+                case .wrongPassword, .invalidCredential:
+                    throw AuthError.wrongPassword
+                case .userDisabled:
+                    throw AuthError.userDisabled
+                case .requiresRecentLogin:
+                    throw AuthError.requiresRecentLogin
+                default:
+                    throw AuthError.otherError
+                }
+            } else {
+                throw AuthError.otherError
+            }
+        }
+    }
+    
+    public func reauthenticate_withApple(appleAuth: ASAuthorization, nonce: String) async throws {
+        let credential = try apple_oauth_credential(from: appleAuth, nonce: nonce)
+
+        guard let user = auth.currentUser else {
+            throw AuthError.noAuthenticatedUser
+        }
+
+        do {
+            try await user.reauthenticate(with: credential)
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == AuthErrorDomain,
+               let code = AuthErrorCode(rawValue: nsError.code) {
+                switch code {
+                case .userDisabled:
+                    throw AuthError.userDisabled
+                case .requiresRecentLogin:
+                    throw AuthError.requiresRecentLogin
+                default:
+                    throw AuthError.otherError
+                }
+            } else {
+                throw AuthError.otherError
+            }
+        }
+    }
+
+
    
         public func delete_firestore_auth_accounts(credential: AuthCredential?) async throws {
               guard let user = Auth.auth().currentUser else {
@@ -122,6 +190,24 @@ public actor SharedAuthService {
         
     }
    
+    // helper to turn Apple auth result into a Firebase OAuth credential
+       public func apple_oauth_credential(from appleAuth: ASAuthorization,
+                                           nonce: String) throws -> AuthCredential {
+           guard let appleIDCredential = appleAuth.credential as? ASAuthorizationAppleIDCredential else {
+               throw AuthError.invalidCredential
+           }
+
+           guard let idTokenData = appleIDCredential.identityToken,
+                 let idTokenString = String(data: idTokenData, encoding: .utf8) else {
+               throw AuthError.invalidCredential
+           }
+
+           return OAuthProvider.credential(
+               withProviderID: "apple.com",
+               idToken: idTokenString,
+               rawNonce: nonce
+           )
+       }
     
     public func register_with_email_password(displayName: String, email: String, password: String) async throws -> User {
         let user = try await signIn_and_create_firestore_user_if_necessary(using: {
