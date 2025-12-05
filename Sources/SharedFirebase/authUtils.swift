@@ -62,8 +62,8 @@ public enum FSError:Error{
 public actor SharedAuthService {
     public static let shared = SharedAuthService()
 
-    private let db = Firestore.firestore()
-    private let auth=Auth.auth()
+    public let db = Firestore.firestore()
+    public let auth=Auth.auth()
     public var currentUser: User? = nil
     public var signedIn: Bool = false
     
@@ -164,7 +164,7 @@ public actor SharedAuthService {
         do{let authResult=try await Auth.auth().createUser(withEmail: email, password: password)
             let user=authResult.user
             if(confirmEmail){
-                
+                auth.useAppLanguage()
                 try await user.sendEmailVerification()
                           let tries = 150 // ~5 min @ 2s
                           for _ in 0..<tries {
