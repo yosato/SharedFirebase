@@ -58,8 +58,8 @@ public enum FSError:Error{
     case deletionFailedError
 }
 
-
-public actor SharedAuthService {
+@MainActor
+public final class SharedAuthService {
     public static let shared = SharedAuthService()
 
     public let db = Firestore.firestore()
